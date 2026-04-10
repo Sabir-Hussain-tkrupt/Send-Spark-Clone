@@ -260,37 +260,42 @@ function App() {
 
   const renderHome = () => (
     <>
-      <section className="banner">
-        <div>
-          <span className="badge">BETA</span>
-          <strong> Early Access: Multiple Variables</strong>
-          <p>Be among the first to scale personalization with multiple merge fields in one video.</p>
+      <section className="welcome-shell">
+        <div className="welcome-headline">
+          <span className="avatar-chip"></span>
+          <h1>Welcome</h1>
         </div>
-        <button className="button banner-button">Request Access</button>
-      </section>
 
-      <section className="panel hero-panel">
-        <div className="panel-header panel-header-block">
-          <div>
-            <h1>Dynamic Videos</h1>
-            <p>Scale yourself with dynamic videos and your integrations.</p>
+        <section className="panel welcome-hero">
+          <div className="welcome-copy">
+            <span className="feature-tag">AI Dynamic Videos</span>
+            <h2>Make AI-Personalized Videos</h2>
+            <p>
+              Let&apos;s do what you came here to do. Get started and personalize your outreach at scale with video.
+            </p>
+
+            <div className="hero-actions">
+              <button className="button solid" onClick={() => openRecordChoices('general')}>
+                Get Started
+              </button>
+              <button className="button ghost" onClick={() => openUploadPicker('general')}>
+                Upload Video
+              </button>
+              <button className="button ghost" onClick={() => setView(VIEWS.LIBRARY)}>
+                Open Library
+              </button>
+            </div>
+
+            <p className="hero-note">Instant uplift on your campaigns.</p>
           </div>
-          <button className="button solid" onClick={() => setView(VIEWS.DYNAMIC)}>
-            Create Dynamic Video
-          </button>
-        </div>
 
-        <div className="hero-actions">
-          <button className="button solid" onClick={() => openRecordChoices('general')}>
-            Start Recording
-          </button>
-          <button className="button ghost" onClick={() => openUploadPicker('general')}>
-            Upload Video
-          </button>
-          <button className="button ghost" onClick={() => setView(VIEWS.LIBRARY)}>
-            Open Video Library
-          </button>
-        </div>
+          <div className="hero-visual" aria-hidden="true">
+            <div className="visual-card visual-card-top">Hey Bethany!</div>
+            <div className="visual-card visual-card-right">Hey Brandon!</div>
+            <div className="visual-circle" />
+            <div className="visual-card visual-card-bottom">Hey Melissa!</div>
+          </div>
+        </section>
       </section>
     </>
   )
