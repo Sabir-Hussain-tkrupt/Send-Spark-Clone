@@ -91,12 +91,23 @@ function normalizeWebsiteUrl(url) {
 }
 
 function buildCustomScreenshotSource(url) {
-  const template = String(import.meta.env.VITE_SCREENSHOT_API_TEMPLATE || '').trim()
-  if (!template) {
+  const configured = String(import.meta.env.VITE_SCREENSHOT_API_TEMPLATE || '').trim()
+  if (!configured) {
     return ''
   }
 
-  return template.replace('{url}', encodeURIComponent(url))
+  // Accept either a full template containing {url} or a raw provider API key.
+  if (configured.includes('{url}')) {
+    return configured.replace('{url}', encodeURIComponent(url))
+  }
+
+  if (configured.startsWith('ubx_')) {
+    return `https://api.urlbox.io/v1/${configured}/png?url=${encodeURIComponent(url)}&width=1280&full_page=true`
+  }
+
+  return `https://shot.screenshotapi.net/screenshot?token=${encodeURIComponent(configured)}&url=${encodeURIComponent(
+    url,
+  )}&width=1280&full_page=true`
 }
 
 async function resolveBackgroundImage(primaryUrl, fallbackUrl) {
@@ -162,6 +173,12 @@ function drawBackground(ctx, canvas, backgroundImage, simulateScrolling, progres
     drawHeight = drawWidth / imageRatio
   }
 
+  if (simulateScrolling) {
+    // Scale up slightly so we always have vertical room to animate scrolling.
+    drawWidth *= 1.12
+    drawHeight *= 1.12
+  }
+
   let offsetX = (width - drawWidth) / 2
   let offsetY = (height - drawHeight) / 2
 
@@ -206,7 +223,12 @@ async function createAudioTrackFromBlob(audioBlob) {
 }
 
 function getRecorderMimeType() {
-  const candidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+  const candidates = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=h264,opus',
+    'video/webm',
+  ]
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || ''
 }
 
@@ -246,7 +268,7 @@ export async function renderDynamicVideo(options) {
       : null
 
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 8
-    const stream = canvas.captureStream(30)
+    const stream = canvas.captureStream(60)
 
     let externalAudioTrack = null
     let audioStarter = null
@@ -326,30 +348,45 @@ export async function renderDynamicVideo(options) {
 
     await new Promise((resolve) => {
       let raf = null
+      let done = false
 
-      const step = () => {
+      const finish = () => {
+        if (done) return
+        done = true
+        if (raf) {
+          cancelAnimationFrame(raf)
+        }
+        resolve()
+      }
+
+      const rafStep = () => {
         drawFrame()
 
         if (video.ended || video.currentTime >= duration) {
-          resolve()
+          finish()
           return
         }
 
-        raf = requestAnimationFrame(step)
+        raf = requestAnimationFrame(rafStep)
       }
 
-      raf = requestAnimationFrame(step)
+      if ('requestVideoFrameCallback' in video) {
+        const frameStep = () => {
+          drawFrame()
 
-      video.addEventListener(
-        'ended',
-        () => {
-          if (raf) {
-            cancelAnimationFrame(raf)
+          if (video.ended || video.currentTime >= duration) {
+            finish()
+            return
           }
-          resolve()
-        },
-        { once: true },
-      )
+
+          video.requestVideoFrameCallback(frameStep)
+        }
+        video.requestVideoFrameCallback(frameStep)
+      } else {
+        raf = requestAnimationFrame(rafStep)
+      }
+
+      video.addEventListener('ended', finish, { once: true })
     })
 
     drawFrame()

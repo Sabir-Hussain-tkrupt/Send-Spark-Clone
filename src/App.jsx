@@ -1045,7 +1045,7 @@ function App() {
 
       <section className="main-column">
         <header className="searchbar-wrap">
-          <input className="searchbar" placeholder="Search Sendspark..." aria-label="Search" />
+          <input className="searchbar" aria-label="Search" />
         </header>
 
         {error ? <div className="notice error">{error}</div> : null}

@@ -1,4 +1,4 @@
-let transcriberPromise = null
+const transcriberCache = new Map()
 
 function getAudioContext() {
   const Context = window.AudioContext || window.webkitAudioContext
@@ -39,19 +39,23 @@ async function decodeVideoAudio(blob) {
   }
 }
 
-async function getTranscriber() {
-  if (!transcriberPromise) {
-    transcriberPromise = (async () => {
+async function getTranscriber(modelName) {
+  const key = modelName || 'Xenova/whisper-base.en'
+
+  if (!transcriberCache.has(key)) {
+    const promise = (async () => {
       const { env, pipeline } = await import('@xenova/transformers')
       env.allowLocalModels = false
       env.allowRemoteModels = true
       env.useBrowserCache = true
 
-      return pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en')
+      return pipeline('automatic-speech-recognition', key)
     })()
+
+    transcriberCache.set(key, promise)
   }
 
-  return transcriberPromise
+  return transcriberCache.get(key)
 }
 
 export async function transcribeVideoBlob(blob) {
@@ -60,15 +64,29 @@ export async function transcribeVideoBlob(blob) {
   }
 
   const { samples, sampleRate } = await decodeVideoAudio(blob)
-  const transcriber = await getTranscriber()
 
-  const result = await transcriber(samples, {
-    sampling_rate: sampleRate,
-    chunk_length_s: 20,
-    stride_length_s: 4,
-    task: 'transcribe',
-    language: 'english',
-  })
+  const modelCandidates = ['Xenova/whisper-base.en', 'Xenova/whisper-tiny.en']
+  const transcripts = []
 
-  return String(result?.text || '').trim()
+  for (const modelName of modelCandidates) {
+    try {
+      const transcriber = await getTranscriber(modelName)
+      const result = await transcriber(samples, {
+        sampling_rate: sampleRate,
+        chunk_length_s: 20,
+        stride_length_s: 4,
+        task: 'transcribe',
+        language: 'english',
+      })
+
+      const text = String(result?.text || '').trim()
+      if (text) {
+        transcripts.push(text)
+      }
+    } catch {
+      // Continue with other model candidates.
+    }
+  }
+
+  return transcripts.join(' ').trim()
 }

@@ -611,6 +611,54 @@ body {
   gap: 14px;
 }
 
+.toggle-switch {
+  border: 1px solid #cecffa;
+  border-radius: 999px;
+  width: 86px;
+  height: 34px;
+  position: relative;
+  background: #f2f3fd;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px 3px 4px;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toggle-switch .toggle-knob {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.2);
+  transform: translateX(0);
+  transition: transform 0.2s ease;
+}
+
+.toggle-switch .toggle-text {
+  position: absolute;
+  right: 10px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #5a6078;
+}
+
+.toggle-switch.on {
+  background: linear-gradient(135deg, #5f45f5, #4a2fe4);
+  border-color: #4b33d9;
+}
+
+.toggle-switch.on .toggle-knob {
+  transform: translateX(50px);
+}
+
+.toggle-switch.on .toggle-text {
+  color: #fff;
+  right: auto;
+  left: 10px;
+}
+
 .inline-toggle {
   margin-top: 0;
 }
