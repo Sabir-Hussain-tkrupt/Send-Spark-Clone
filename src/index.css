@@ -219,6 +219,12 @@ body {
   box-shadow: var(--shadow);
 }
 
+.dynamic-panel {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(95, 69, 245, 0.08), transparent 32%),
+    #fff;
+}
+
 .hero-panel h1,
 .panel h2,
 .panel h3,
@@ -395,6 +401,12 @@ body {
   background: #fff;
 }
 
+.button.danger {
+  border-color: #ffccd4;
+  background: #fff3f5;
+  color: #a8253a;
+}
+
 .button.menu-button {
   background: linear-gradient(135deg, #684bff, #4b30de);
   color: #fff;
@@ -464,6 +476,337 @@ body {
 .dynamic-confirm p {
   margin: 10px 0 0;
   color: var(--muted);
+}
+
+.wizard-steps {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.step-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  font: inherit;
+  color: #353743;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.step-chip span {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #f2f3fb;
+  font-weight: 700;
+}
+
+.step-chip.active {
+  border-color: #c7c9ff;
+  background: #f0efff;
+  color: #4a36c2;
+  transform: translateY(-1px);
+}
+
+.step-chip.active span,
+.step-chip.done span {
+  background: #5b3df5;
+  color: #fff;
+}
+
+.selected-video-shell {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fafaff;
+  padding: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.selected-video-shell.compact {
+  background: #f6f7ff;
+}
+
+.selected-video-shell h3,
+.selected-video-shell p {
+  margin: 0;
+}
+
+.selected-video-shell p + p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.wizard-card {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  padding: 14px;
+  animation: stageIn 0.2s ease;
+}
+
+@keyframes stageIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.field-grid {
+  margin-top: 10px;
+  display: grid;
+  gap: 12px;
+}
+
+.field-grid.two-column {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-grid label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.92rem;
+}
+
+.field-grid input,
+.field-grid textarea,
+.field-grid select,
+.contacts-table input,
+.dynamic-modal input,
+.dynamic-modal textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text);
+  background: #fff;
+}
+
+.toggle-row {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.inline-toggle {
+  margin-top: 0;
+}
+
+.keyword-instruction {
+  margin-top: 10px;
+  border-radius: 10px;
+  border: 1px solid #d5dbff;
+  background: #eef1ff;
+  padding: 10px 12px;
+  color: #32408a;
+  font-weight: 600;
+}
+
+.hint-text {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.wizard-nav {
+  margin-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.preview-card {
+  margin-top: 12px;
+  border: 1px solid #e4e6f7;
+  border-radius: 12px;
+  background: #fbfbff;
+  padding: 14px;
+}
+
+.preview-card h4,
+.preview-card p {
+  margin: 0;
+}
+
+.preview-header {
+  margin-top: 8px !important;
+  font-weight: 700;
+  font-size: 1.08rem;
+}
+
+.preview-message {
+  margin-top: 8px !important;
+  color: var(--muted);
+}
+
+.preview-card .button {
+  margin-top: 10px;
+}
+
+.contacts-table-wrap {
+  margin-top: 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.contacts-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+}
+
+.contacts-table th,
+.contacts-table td {
+  border-bottom: 1px solid #eef0f7;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.contacts-table th {
+  background: #f6f7ff;
+  font-weight: 600;
+  color: #353859;
+}
+
+.contacts-actions {
+  margin-top: 10px;
+}
+
+.generation-progress {
+  margin-top: 10px;
+  color: #3d2bb1;
+  font-weight: 600;
+}
+
+.generation-wrap {
+  margin-top: 12px;
+  border: 1px solid #dcdff9;
+  border-radius: 12px;
+  background: #f9faff;
+  padding: 12px;
+}
+
+.progress-track {
+  margin-top: 8px;
+  height: 10px;
+  border-radius: 999px;
+  background: #e5e8ff;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #5f45f5, #2d6bff);
+  transition: width 0.25s ease;
+}
+
+.output-layout {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 14px;
+}
+
+.output-list {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  max-height: 520px;
+  overflow: auto;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.output-item {
+  border: 1px solid #ebedf6;
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.output-item.active {
+  border-color: #cdd4ff;
+  background: #f6f7ff;
+}
+
+.output-open {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.output-preview {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+}
+
+.output-preview h4,
+.output-preview p {
+  margin: 10px 0 0;
+}
+
+.cta-link {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  padding: 10px 14px;
+  text-decoration: none;
+  color: #fff;
+  background: linear-gradient(135deg, #5f45f5, #3f28c8);
+}
+
+.error-text {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #b0283e;
+}
+
+.dynamic-modal {
+  width: min(680px, 100%);
+  display: grid;
+  gap: 10px;
+}
+
+.confirm-modal {
+  width: min(440px, 100%);
 }
 
 .success-box {
@@ -553,5 +896,15 @@ body {
 
   .recorder-layout {
     grid-template-columns: 1fr;
+  }
+
+  .field-grid.two-column,
+  .output-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .selected-video-shell {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

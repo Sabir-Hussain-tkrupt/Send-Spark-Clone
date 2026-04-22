@@ -9,13 +9,31 @@ import {
   stopAudioContext,
   stopStream,
 } from './lib/media'
-import { addVideoRecord, listVideoRecords, revokeVideoUrls } from './lib/videoStore'
+import {
+  addVideoRecord,
+  deleteVideoRecord,
+  listVideoRecords,
+  revokeVideoUrls,
+} from './lib/videoStore'
+import {
+  applyTemplate,
+  createEmptyContact,
+  keywordExistsFuzzy,
+  normalizeContact,
+  replaceKeywordWithFirstName,
+} from './lib/template'
+import { transcribeVideoBlob } from './lib/transcription'
+import { synthesizeSpeechFromText } from './lib/tts'
+import { renderDynamicVideo } from './lib/dynamicVideo'
 
 const VIEWS = {
   HOME: 'home',
   LIBRARY: 'library',
   DYNAMIC: 'dynamic',
 }
+
+const STEPS = ['Video', 'Background', 'Landing Page', 'Contacts', 'Output']
+const FIXED_PERSONALIZATION_KEYWORD = 'someone'
 
 function buildVideoName(source) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
@@ -36,6 +54,33 @@ function formatBytes(bytes) {
   return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
 }
 
+function ToggleSwitch({ checked, onToggle, disabled = false }) {
+  return (
+    <button
+      type="button"
+      className={checked ? 'toggle-switch on' : 'toggle-switch'}
+      onClick={() => {
+        if (!disabled) {
+          onToggle(!checked)
+        }
+      }}
+      aria-pressed={checked}
+      disabled={disabled}
+    >
+      <span className="toggle-knob" />
+      <span className="toggle-text">{checked ? 'ON' : 'OFF'}</span>
+    </button>
+  )
+}
+
+function revokeGeneratedVideoUrls(records) {
+  records.forEach((record) => {
+    if (record.previewUrl) {
+      URL.revokeObjectURL(record.previewUrl)
+    }
+  })
+}
+
 function App() {
   const [view, setView] = useState(VIEWS.HOME)
   const [videos, setVideos] = useState([])
@@ -46,14 +91,44 @@ function App() {
   const [recordContext, setRecordContext] = useState('general')
   const [recordChoiceOpen, setRecordChoiceOpen] = useState(false)
   const [recordMode, setRecordMode] = useState(null)
+  const [deleteCandidate, setDeleteCandidate] = useState(null)
+
   const [dynamicSelectedId, setDynamicSelectedId] = useState(null)
-  const [dynamicConfirmedVideo, setDynamicConfirmedVideo] = useState(null)
+  const [dynamicStep, setDynamicStep] = useState(1)
+  const [dynamicConfigOpen, setDynamicConfigOpen] = useState(false)
+
+  const [namePersonalization, setNamePersonalization] = useState(true)
+  const [detectedTranscript, setDetectedTranscript] = useState('')
+  const [keywordCheckRunning, setKeywordCheckRunning] = useState(false)
+  const [keywordChecked, setKeywordChecked] = useState(false)
+
+  const [dynamicBackgroundEnabled, setDynamicBackgroundEnabled] = useState(true)
+  const [fallbackUrl, setFallbackUrl] = useState('')
+  const [bubblePosition, setBubblePosition] = useState('bottom-left')
+  const [simulateScrolling, setSimulateScrolling] = useState(true)
+
+  const [headerTemplate, setHeaderTemplate] = useState('')
+  const [messageTemplate, setMessageTemplate] = useState('')
+  const [ctaText, setCtaText] = useState('')
+  const [ctaUrl, setCtaUrl] = useState('')
+
+  const [contacts, setContacts] = useState([createEmptyContact()])
+  const [generatedVideos, setGeneratedVideos] = useState([])
+  const [selectedGeneratedId, setSelectedGeneratedId] = useState(null)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [generationProgress, setGenerationProgress] = useState('')
+  const [generationPercent, setGenerationPercent] = useState(0)
 
   const uploadRef = useRef(null)
 
   const dynamicSelectedVideo = useMemo(
     () => videos.find((video) => video.id === dynamicSelectedId) || null,
     [dynamicSelectedId, videos],
+  )
+
+  const selectedGeneratedVideo = useMemo(
+    () => generatedVideos.find((item) => item.id === selectedGeneratedId) || generatedVideos[0] || null,
+    [generatedVideos, selectedGeneratedId],
   )
 
   useEffect(() => {
@@ -88,14 +163,29 @@ function App() {
         revokeVideoUrls(previous)
         return []
       })
+      setGeneratedVideos((previous) => {
+        revokeGeneratedVideoUrls(previous)
+        return []
+      })
     }
   }, [])
 
   useEffect(() => {
     if (dynamicSelectedId && !videos.some((item) => item.id === dynamicSelectedId)) {
       setDynamicSelectedId(null)
+      setDynamicStep(1)
     }
   }, [dynamicSelectedId, videos])
+
+  const refreshVideos = async () => {
+    const refreshed = await listVideoRecords()
+    setVideos((previous) => {
+      revokeVideoUrls(previous)
+      return refreshed
+    })
+    setStatus(refreshed.length ? '' : 'No videos yet. Record or upload your first one.')
+    return refreshed
+  }
 
   const persistVideo = async (record) => {
     const payload = {
@@ -104,16 +194,20 @@ function App() {
     }
 
     await addVideoRecord(payload)
-
-    const refreshed = await listVideoRecords()
-    setVideos((previous) => {
-      revokeVideoUrls(previous)
-      return refreshed
-    })
-    setStatus(refreshed.length ? '' : 'No videos yet. Record or upload your first one.')
+    const refreshed = await refreshVideos()
 
     const saved = refreshed.find((item) => item.name === payload.name && item.createdAt === payload.createdAt)
     return saved || refreshed[0] || null
+  }
+
+  const resetDynamicOutputs = () => {
+    setGeneratedVideos((previous) => {
+      revokeGeneratedVideoUrls(previous)
+      return []
+    })
+    setSelectedGeneratedId(null)
+    setGenerationProgress('')
+    setGenerationPercent(0)
   }
 
   const handleUploadedFiles = async (event) => {
@@ -150,6 +244,9 @@ function App() {
       if (uploadContext === 'dynamic' && saved) {
         setView(VIEWS.DYNAMIC)
         setDynamicSelectedId(saved.id)
+        setDynamicStep(1)
+        setKeywordChecked(false)
+        setDetectedTranscript('')
       }
 
       setStatus('Video uploaded and saved to library.')
@@ -205,19 +302,262 @@ function App() {
     if (recordContext === 'dynamic' && saved) {
       setView(VIEWS.DYNAMIC)
       setDynamicSelectedId(saved.id)
+      setDynamicStep(1)
+      setKeywordChecked(false)
+      setDetectedTranscript('')
     }
 
     setStatus('Recording saved to library.')
   }
 
-  const confirmDynamicSelection = () => {
-    if (!dynamicSelectedVideo) {
-      setError('Select a video first to continue with Dynamic Video flow.')
+  const handleDeleteVideo = async () => {
+    if (!deleteCandidate) {
       return
     }
 
-    setDynamicConfirmedVideo(dynamicSelectedVideo)
+    try {
+      setStatus('Deleting video...')
+      await deleteVideoRecord(deleteCandidate.id)
+      const refreshed = await refreshVideos()
+
+      if (!refreshed.some((item) => item.id === deleteCandidate.id) && dynamicSelectedId === deleteCandidate.id) {
+        setDynamicSelectedId(null)
+      }
+
+      setDeleteCandidate(null)
+      setStatus('Video deleted successfully.')
+    } catch (deleteError) {
+      setError(deleteError.message || 'Failed to delete this video.')
+    }
+  }
+
+  const openDynamicConfig = () => {
+    if (!dynamicSelectedVideo) {
+      setError('Select a video first to create a dynamic video.')
+      return
+    }
+
     setError('')
+    setDynamicConfigOpen(true)
+  }
+
+  const validateKeywordAndContinue = async () => {
+    if (!dynamicSelectedVideo) {
+      setError('Select a video first to continue.')
+      return
+    }
+
+    if (!namePersonalization) {
+      setKeywordChecked(false)
+      setDetectedTranscript('')
+      setDynamicConfigOpen(false)
+      setDynamicStep(2)
+      return
+    }
+
+    setKeywordCheckRunning(true)
+    setError('')
+
+    try {
+      const transcript = await transcribeVideoBlob(dynamicSelectedVideo.blob)
+
+      if (!transcript) {
+        throw new Error('Could not detect speech transcript from this video.')
+      }
+
+      setDetectedTranscript(transcript)
+      const hasKeyword = keywordExistsFuzzy(transcript, FIXED_PERSONALIZATION_KEYWORD)
+
+      if (!hasKeyword) {
+        throw new Error("Keyword 'someone' not found in video")
+      }
+
+      setKeywordChecked(true)
+      setDynamicConfigOpen(false)
+      setDynamicStep(2)
+      setStatus("Keyword 'someone' detected successfully.")
+    } catch (keywordError) {
+      setKeywordChecked(false)
+      setError(keywordError.message || 'Keyword validation failed.')
+    } finally {
+      setKeywordCheckRunning(false)
+    }
+  }
+
+  const updateContact = (id, key, value) => {
+    setContacts((previous) =>
+      previous.map((contact) => (contact.id === id ? { ...contact, [key]: value } : contact)),
+    )
+  }
+
+  const removeContact = (id) => {
+    setContacts((previous) => {
+      if (previous.length <= 1) {
+        return previous
+      }
+      return previous.filter((item) => item.id !== id)
+    })
+  }
+
+  const buildRenderPayload = (contact) => {
+    const normalizedContact = normalizeContact(contact)
+
+    return {
+      header: applyTemplate(headerTemplate, normalizedContact),
+      message: applyTemplate(messageTemplate, normalizedContact),
+      cta: applyTemplate(ctaText, normalizedContact),
+      ctaHref: applyTemplate(ctaUrl, normalizedContact),
+      contact: normalizedContact,
+      background: normalizedContact.backgroundUrl,
+    }
+  }
+
+  const generatePersonalizedAudio = async (contact) => {
+    if (!namePersonalization) {
+      return null
+    }
+
+    if (!keywordChecked) {
+      throw new Error("Enable and validate keyword 'someone' before generating videos.")
+    }
+
+    const baseTranscript = String(detectedTranscript || '').trim()
+    if (!baseTranscript) {
+      throw new Error('Transcript is required for name-based voice replacement.')
+    }
+
+    const script = replaceKeywordWithFirstName(baseTranscript, FIXED_PERSONALIZATION_KEYWORD, contact.firstName)
+    return synthesizeSpeechFromText(script)
+  }
+
+  const generateVideos = async () => {
+    if (!dynamicSelectedVideo) {
+      setError('Select a source video first.')
+      setDynamicStep(1)
+      return
+    }
+
+    const normalizedContacts = contacts
+      .map((contact) => normalizeContact(contact))
+      .filter((contact) => contact.firstName || contact.email || contact.companyName || contact.customField)
+
+    if (!normalizedContacts.length) {
+      setError('Enter at least one contact before generation.')
+      setDynamicStep(4)
+      return
+    }
+
+    if (namePersonalization && !keywordChecked) {
+      setError("Keyword 'someone' must be validated first.")
+      setDynamicStep(1)
+      return
+    }
+
+    setIsGenerating(true)
+    setError('')
+    setStatus('Generating personalized videos...')
+    setGenerationPercent(0)
+    resetDynamicOutputs()
+
+    const results = []
+    const total = normalizedContacts.length
+
+    for (let index = 0; index < normalizedContacts.length; index += 1) {
+      const contact = normalizedContacts[index]
+      const label = contact.firstName || contact.email || `contact-${index + 1}`
+      setGenerationProgress(`Generating ${index + 1}/${normalizedContacts.length}: ${label}`)
+
+      try {
+        const payload = buildRenderPayload(contact)
+        const personalizedAudioBlob = await generatePersonalizedAudio(contact)
+
+        const blob = await renderDynamicVideo({
+          sourceBlob: dynamicSelectedVideo.blob,
+          dynamicBackground: dynamicBackgroundEnabled,
+          backgroundUrl: payload.background,
+          fallbackUrl,
+          bubblePosition,
+          simulateScrolling,
+          personalizedAudioBlob,
+          onProgress: (frameProgress) => {
+            const normalized = Math.max(0, Math.min(1, Number(frameProgress || 0)))
+            const pct = Math.round(((index + normalized) / total) * 100)
+            setGenerationPercent(pct)
+          },
+        })
+
+        let duration = 0
+        try {
+          duration = await getBlobDuration(blob)
+        } catch {
+          duration = Number(dynamicSelectedVideo.duration || 0)
+        }
+
+        try {
+          await addVideoRecord({
+            blob,
+            name: `dynamic-${payload.contact.firstName || 'contact'}-${Date.now()}.webm`,
+            duration,
+            source: 'dynamic',
+            mimeType: blob.type || 'video/webm',
+            size: blob.size,
+            createdAt: new Date().toISOString(),
+          })
+        } catch {
+          // Do not fail generation if library persistence fails for one item.
+        }
+
+        const previewUrl = URL.createObjectURL(blob)
+        const output = {
+          id: crypto.randomUUID(),
+          contact: payload.contact,
+          header: payload.header,
+          message: payload.message,
+          cta: payload.cta,
+          ctaHref: payload.ctaHref,
+          previewUrl,
+          blob,
+          status: 'success',
+          fileName: `dynamic-${payload.contact.firstName || 'contact'}-${index + 1}.webm`,
+        }
+
+        results.push(output)
+        setGeneratedVideos([...results])
+        setGenerationPercent(Math.round(((index + 1) / total) * 100))
+      } catch (generationError) {
+        results.push({
+          id: crypto.randomUUID(),
+          contact,
+          status: 'error',
+          error: generationError.message || 'Failed to generate personalized output.',
+        })
+        setGeneratedVideos([...results])
+      }
+    }
+
+    await refreshVideos()
+
+    setIsGenerating(false)
+    setGenerationProgress('Generation complete.')
+    setGenerationPercent(100)
+    setStatus('Personalized videos generated. Review and download below.')
+    setDynamicStep(5)
+
+    const firstSuccess = results.find((item) => item.status === 'success')
+    setSelectedGeneratedId(firstSuccess?.id || null)
+  }
+
+  const downloadGeneratedVideo = (record) => {
+    if (!record?.blob || !record.previewUrl) {
+      return
+    }
+
+    const anchor = document.createElement('a')
+    anchor.href = record.previewUrl
+    anchor.download = record.fileName || `dynamic-${record.id}.webm`
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
   }
 
   const renderLibrary = (selectable = false) => (
@@ -243,14 +583,26 @@ function App() {
                   {video.source} • {formatBytes(video.size)}
                 </p>
               </div>
+
               {selectable ? (
                 <button
                   className={dynamicSelectedId === video.id ? 'button solid' : 'button ghost'}
-                  onClick={() => setDynamicSelectedId(video.id)}
+                  onClick={() => {
+                    setDynamicSelectedId(video.id)
+                    setDynamicStep(1)
+                    setError('')
+                    setKeywordChecked(false)
+                    setDetectedTranscript('')
+                    resetDynamicOutputs()
+                  }}
                 >
-                  {dynamicSelectedId === video.id ? 'Selected' : 'Select for Dynamic'}
+                  {dynamicSelectedId === video.id ? 'Selected' : 'Use This Video'}
                 </button>
-              ) : null}
+              ) : (
+                <button className="button danger" onClick={() => setDeleteCandidate(video)}>
+                  Delete Video
+                </button>
+              )}
             </article>
           ))}
         </div>
@@ -259,100 +611,400 @@ function App() {
   )
 
   const renderHome = () => (
-    <>
-      <section className="welcome-shell">
-        <div className="welcome-headline">
-          <span className="avatar-chip"></span>
-          <h1>Welcome</h1>
+    <section className="welcome-shell">
+      <div className="welcome-headline">
+        <span className="avatar-chip"></span>
+        <h1>Welcome</h1>
+      </div>
+
+      <section className="panel welcome-hero">
+        <div className="welcome-copy">
+          <span className="feature-tag">AI Dynamic Videos</span>
+          <h2>Make AI-Personalized Videos</h2>
+          <p>
+            Record or upload once, then generate personalized videos for every contact with dynamic backgrounds,
+            custom messaging, and bulk exports.
+          </p>
+
+          <div className="hero-actions">
+            <button className="button solid" onClick={() => openRecordChoices('general')}>
+              Get Started
+            </button>
+            <button className="button ghost" onClick={() => openUploadPicker('general')}>
+              Upload Video
+            </button>
+            <button className="button ghost" onClick={() => setView(VIEWS.DYNAMIC)}>
+              Dynamic Studio
+            </button>
+          </div>
+
+          <p className="hero-note">Use keyword someone for name-personalized audio replacement.</p>
         </div>
 
-        <section className="panel welcome-hero">
-          <div className="welcome-copy">
-            <span className="feature-tag">AI Dynamic Videos</span>
-            <h2>Make AI-Personalized Videos</h2>
-            <p>
-              Let&apos;s do what you came here to do. Get started and personalize your outreach at scale with video.
-            </p>
+        <div className="hero-visual" aria-hidden="true">
+          <div className="visual-card visual-card-top">hey someone</div>
+          <div className="visual-card visual-card-right">{'{{firstName}}'}</div>
+          <div className="visual-circle" />
+          <div className="visual-card visual-card-bottom">dynamic background</div>
+        </div>
+      </section>
+    </section>
+  )
 
-            <div className="hero-actions">
-              <button className="button solid" onClick={() => openRecordChoices('general')}>
-                Get Started
+  const renderDynamic = () => {
+    const sampleContact = normalizeContact(contacts[0] || createEmptyContact())
+    const previewHeader = applyTemplate(headerTemplate, sampleContact)
+    const previewMessage = applyTemplate(messageTemplate, sampleContact)
+    const previewCta = applyTemplate(ctaText, sampleContact)
+
+    return (
+      <section className="panel dynamic-panel">
+        <div className="panel-header panel-header-block">
+          <div>
+            <h2>Dynamic Video Studio</h2>
+            <p>Build and generate contact-personalized dynamic videos end-to-end.</p>
+          </div>
+        </div>
+
+        <div className="dynamic-actions">
+          <button className="button solid" onClick={() => openRecordChoices('dynamic')}>
+            Record New Video
+          </button>
+          <button className="button ghost" onClick={() => openUploadPicker('dynamic')}>
+            Upload Video
+          </button>
+          <button className="button ghost" onClick={() => setView(VIEWS.LIBRARY)}>
+            Open Library
+          </button>
+        </div>
+
+        <div className="wizard-steps" role="tablist" aria-label="Dynamic video steps">
+          {STEPS.map((stepLabel, index) => {
+            const stepNumber = index + 1
+            const active = dynamicStep === stepNumber
+            const completed = dynamicStep > stepNumber
+            return (
+              <button
+                key={stepLabel}
+                className={active ? 'step-chip active' : completed ? 'step-chip done' : 'step-chip'}
+                onClick={() => {
+                  if (stepNumber <= dynamicStep) {
+                    setDynamicStep(stepNumber)
+                  }
+                }}
+                type="button"
+              >
+                <span>{stepNumber}</span>
+                {stepLabel}
               </button>
-              <button className="button ghost" onClick={() => openUploadPicker('general')}>
-                Upload Video
+            )
+          })}
+        </div>
+
+        {dynamicStep === 1 ? (
+          <>
+            <div className="dynamic-selection">
+              <h3>Choose Source Video</h3>
+              {renderLibrary(true)}
+            </div>
+
+            {dynamicSelectedVideo ? (
+              <section className="selected-video-shell">
+                <div>
+                  <h3>Selected Video</h3>
+                  <p>{dynamicSelectedVideo.name}</p>
+                  <p>
+                    {formatDuration(dynamicSelectedVideo.duration)} • {formatBytes(dynamicSelectedVideo.size)}
+                  </p>
+                </div>
+                <button className="button solid" onClick={openDynamicConfig}>
+                  Create Dynamic Video
+                </button>
+              </section>
+            ) : (
+              <div className="empty-state">Select a video from the library above to start the dynamic flow.</div>
+            )}
+          </>
+        ) : (
+          <section className="selected-video-shell compact">
+            <div>
+              <h3>Source Video</h3>
+              <p>{dynamicSelectedVideo?.name || 'None selected'}</p>
+            </div>
+            <button className="button ghost" onClick={() => setDynamicStep(1)}>
+              Change Video
+            </button>
+          </section>
+        )}
+
+        {dynamicStep === 2 ? (
+          <section className="wizard-card">
+            <h3>Step 2: Dynamic Background Settings</h3>
+
+            <label className="toggle-row">
+              <span>Dynamic Background</span>
+              <ToggleSwitch checked={dynamicBackgroundEnabled} onToggle={setDynamicBackgroundEnabled} />
+            </label>
+
+            {dynamicBackgroundEnabled ? (
+              <div className="field-grid">
+                <label>
+                  Fallback URL
+                  <input
+                    value={fallbackUrl}
+                    onChange={(event) => setFallbackUrl(event.target.value)}
+                  />
+                </label>
+
+                <label>
+                  Camera Bubble Position
+                  <select value={bubblePosition} onChange={(event) => setBubblePosition(event.target.value)}>
+                    <option value="bottom-left">Bottom Left</option>
+                    <option value="bottom-right">Bottom Right</option>
+                    <option value="top-left">Top Left</option>
+                    <option value="top-right">Top Right</option>
+                  </select>
+                </label>
+
+                <label className="toggle-row inline-toggle">
+                  <span>Simulate Scrolling</span>
+                  <ToggleSwitch checked={simulateScrolling} onToggle={setSimulateScrolling} />
+                </label>
+              </div>
+            ) : null}
+
+            <div className="wizard-nav">
+              <button className="button ghost" onClick={() => setDynamicStep(1)}>
+                Back
               </button>
-              <button className="button ghost" onClick={() => setView(VIEWS.LIBRARY)}>
-                Open Library
+              <button className="button solid" onClick={() => setDynamicStep(3)}>
+                Continue
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        {dynamicStep === 3 ? (
+          <section className="wizard-card">
+            <h3>Step 3: Layout, Message, and CTA</h3>
+
+            <div className="field-grid two-column">
+              <label>
+                Header Template
+                <textarea
+                  rows={3}
+                  value={headerTemplate}
+                  onChange={(event) => setHeaderTemplate(event.target.value)}
+                />
+              </label>
+
+              <label>
+                Message Template
+                <textarea
+                  rows={3}
+                  value={messageTemplate}
+                  onChange={(event) => setMessageTemplate(event.target.value)}
+                />
+              </label>
+
+              <label>
+                CTA Text
+                <input
+                  value={ctaText}
+                  onChange={(event) => setCtaText(event.target.value)}
+                />
+              </label>
+
+              <label>
+                CTA URL
+                <input
+                  value={ctaUrl}
+                  onChange={(event) => setCtaUrl(event.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="preview-card">
+              <h4>Live Text Preview</h4>
+              {previewHeader ? <p className="preview-header">{previewHeader}</p> : null}
+              {previewMessage ? <p className="preview-message">{previewMessage}</p> : null}
+              {previewCta ? <button className="button solid" type="button">{previewCta}</button> : null}
+            </div>
+
+            <div className="wizard-nav">
+              <button className="button ghost" onClick={() => setDynamicStep(2)}>
+                Back
+              </button>
+              <button className="button solid" onClick={() => setDynamicStep(4)}>
+                Continue
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        {dynamicStep === 4 ? (
+          <section className="wizard-card">
+            <h3>Step 4: Contacts and Overrides</h3>
+
+            <div className="contacts-table-wrap">
+              <table className="contacts-table">
+                <thead>
+                  <tr>
+                    <th>First Name</th>
+                    <th>Last Name</th>
+                    <th>Email</th>
+                    <th>Company</th>
+                    <th>Custom Field</th>
+                    <th>Background URL</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contacts.map((contact) => (
+                    <tr key={contact.id}>
+                      <td>
+                        <input
+                          value={contact.firstName}
+                          onChange={(event) => updateContact(contact.id, 'firstName', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={contact.lastName}
+                          onChange={(event) => updateContact(contact.id, 'lastName', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={contact.email}
+                          onChange={(event) => updateContact(contact.id, 'email', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={contact.companyName}
+                          onChange={(event) => updateContact(contact.id, 'companyName', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={contact.customField}
+                          onChange={(event) => updateContact(contact.id, 'customField', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={contact.backgroundUrl}
+                          onChange={(event) => updateContact(contact.id, 'backgroundUrl', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <button className="button ghost" type="button" onClick={() => removeContact(contact.id)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="contacts-actions">
+              <button className="button ghost" onClick={() => setContacts((previous) => [...previous, createEmptyContact()])}>
+                Add Contact
               </button>
             </div>
 
-            <p className="hero-note">Instant uplift on your campaigns.</p>
-          </div>
+            <div className="wizard-nav">
+              <button className="button ghost" onClick={() => setDynamicStep(3)}>
+                Back
+              </button>
+              <button className="button solid" onClick={generateVideos} disabled={isGenerating}>
+                {isGenerating ? 'Generating...' : 'Review & Generate'}
+              </button>
+            </div>
 
-          <div className="hero-visual" aria-hidden="true">
-            <div className="visual-card visual-card-top">Hey Bethany!</div>
-            <div className="visual-card visual-card-right">Hey Brandon!</div>
-            <div className="visual-circle" />
-            <div className="visual-card visual-card-bottom">Hey Melissa!</div>
-          </div>
-        </section>
+            {isGenerating ? (
+              <div className="generation-wrap">
+                <p className="generation-progress">{generationProgress}</p>
+                <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={generationPercent}>
+                  <div className="progress-fill" style={{ width: `${generationPercent}%` }} />
+                </div>
+                <p className="hint-text">{generationPercent}% complete</p>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {dynamicStep === 5 ? (
+          <section className="wizard-card">
+            <h3>Step 5: Generated Videos</h3>
+
+            {generatedVideos.length === 0 ? (
+              <div className="empty-state">No outputs yet. Generate from the Contacts step.</div>
+            ) : (
+              <div className="output-layout">
+                <div className="output-list">
+                  {generatedVideos.map((item, index) => {
+                    const name = item.contact?.firstName || `Contact ${index + 1}`
+
+                    return (
+                      <article
+                        key={item.id}
+                        className={selectedGeneratedVideo?.id === item.id ? 'output-item active' : 'output-item'}
+                      >
+                        <button
+                          className="output-open"
+                          type="button"
+                          onClick={() => setSelectedGeneratedId(item.id)}
+                        >
+                          {name}
+                        </button>
+
+                        {item.status === 'success' ? (
+                          <button className="button ghost" onClick={() => downloadGeneratedVideo(item)}>
+                            Download
+                          </button>
+                        ) : (
+                          <p className="error-text">{item.error || 'Generation failed'}</p>
+                        )}
+                      </article>
+                    )
+                  })}
+                </div>
+
+                <div className="output-preview">
+                  {selectedGeneratedVideo && selectedGeneratedVideo.status === 'success' ? (
+                    <>
+                      <video controls src={selectedGeneratedVideo.previewUrl} className="video-player" />
+                      {selectedGeneratedVideo.header ? <h4>{selectedGeneratedVideo.header}</h4> : null}
+                      {selectedGeneratedVideo.message ? <p>{selectedGeneratedVideo.message}</p> : null}
+                      {selectedGeneratedVideo.cta && selectedGeneratedVideo.ctaHref ? (
+                        <a href={selectedGeneratedVideo.ctaHref} target="_blank" rel="noreferrer" className="cta-link">
+                          {selectedGeneratedVideo.cta}
+                        </a>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="empty-state">Select a generated output to preview details.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="wizard-nav">
+              <button className="button ghost" onClick={() => setDynamicStep(4)}>
+                Back
+              </button>
+              <button className="button solid" onClick={() => setDynamicStep(1)}>
+                Start New Generation
+              </button>
+            </div>
+          </section>
+        ) : null}
       </section>
-    </>
-  )
-
-  const renderDynamic = () => (
-    <section className="panel dynamic-panel">
-      <div className="panel-header panel-header-block">
-        <div>
-          <h2>Dynamic Video</h2>
-          <p>Choose to record, upload, or browse your existing library.</p>
-        </div>
-      </div>
-
-      <div className="dynamic-actions">
-        <button className="button solid" onClick={() => openRecordChoices('dynamic')}>
-          Record New Video
-        </button>
-        <button className="button ghost" onClick={() => openUploadPicker('dynamic')}>
-          Upload Video
-        </button>
-        <button
-          className="button ghost"
-          onClick={() => setStatus('Browse and select a video from the library section below.')}
-        >
-          Browse Library
-        </button>
-      </div>
-
-      <div className="dynamic-selection">
-        <h3>Choose from Video Library</h3>
-        {renderLibrary(true)}
-      </div>
-
-      <div className="dynamic-confirm">
-        <button className="button solid" onClick={confirmDynamicSelection}>
-          Confirm Selected Video
-        </button>
-        {dynamicSelectedVideo ? (
-          <p>
-            Current selection: <strong>{dynamicSelectedVideo.name}</strong>
-          </p>
-        ) : (
-          <p>No video selected yet.</p>
-        )}
-      </div>
-
-      {dynamicConfirmedVideo ? (
-        <div className="success-box">
-          <h4>Dynamic step ready</h4>
-          <p>
-            <strong>{dynamicConfirmedVideo.name}</strong> is confirmed. Placeholder processing step complete and the
-            selected video can now be used by downstream dynamic personalization logic.
-          </p>
-        </div>
-      ) : null}
-    </section>
-  )
+    )
+  }
 
   return (
     <div className="layout-shell">
@@ -413,6 +1065,65 @@ function App() {
         onChange={handleUploadedFiles}
         className="hidden-input"
       />
+
+      {dynamicConfigOpen ? (
+        <div className="modal-backdrop">
+          <div className="modal dynamic-modal">
+            <h3>Dynamic Video Guidelines</h3>
+
+            <label className="toggle-row">
+              <span>Name Personalization</span>
+              <ToggleSwitch
+                checked={namePersonalization}
+                onToggle={(next) => {
+                  setNamePersonalization(next)
+                  setKeywordChecked(false)
+                  setDetectedTranscript('')
+                }}
+              />
+            </label>
+
+            {namePersonalization ? (
+              <>
+                <div className="keyword-instruction">Use keyword: someone in script for personalization</div>
+                <p className="hint-text">
+                  We automatically check your audio for the keyword someone.
+                </p>
+              </>
+            ) : (
+              <p className="hint-text">Keyword detection and voice replacement will be skipped.</p>
+            )}
+
+            <div className="modal-actions">
+              <button className="button ghost" onClick={() => setDynamicConfigOpen(false)}>
+                Cancel
+              </button>
+              <button className="button solid" onClick={validateKeywordAndContinue} disabled={keywordCheckRunning}>
+                {keywordCheckRunning ? 'Checking...' : 'Continue'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteCandidate ? (
+        <div className="modal-backdrop">
+          <div className="modal confirm-modal">
+            <h3>Delete Video</h3>
+            <p>
+              Are you sure you want to delete <strong>{deleteCandidate.name}</strong> from your video library?
+            </p>
+            <div className="modal-actions">
+              <button className="button ghost" onClick={() => setDeleteCandidate(null)}>
+                Cancel
+              </button>
+              <button className="button danger" onClick={handleDeleteVideo}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {recordChoiceOpen ? (
         <div className="modal-backdrop">
@@ -509,6 +1220,8 @@ function RecorderStudio({ mode, onClose, onSave, onError }) {
     }
   }
 
+  // This handler intentionally captures current refs/state and is only auto-triggered once.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const startRecording = async () => {
     setLocalError('')
     setSavedMessage('')
@@ -635,7 +1348,7 @@ function RecorderStudio({ mode, onClose, onSave, onError }) {
 
     hasAutoStartedRef.current = true
     startRecording()
-  }, [])
+  }, [startRecording])
 
   return (
     <div className="modal-backdrop">
