@@ -108,6 +108,12 @@ function App() {
   const [messageTemplate, setMessageTemplate] = useState('')
   const [ctaText, setCtaText] = useState('')
   const [ctaUrl, setCtaUrl] = useState('')
+  const [mergePopup, setMergePopup] = useState(null) // 'header' | 'message' | null
+
+  const headerRef = useRef(null)
+  const messageRef = useRef(null)
+  const headerSelRef = useRef({ start: 0, end: 0 })
+  const messageSelRef = useRef({ start: 0, end: 0 })
 
   const [contacts, setContacts] = useState([createEmptyContact()])
   const [generatedVideos, setGeneratedVideos] = useState([])
@@ -363,6 +369,38 @@ function App() {
     })
   }
 
+  const MERGE_TAGS = [
+    { label: 'First Name', token: 'firstName', fallback: 'there' },
+    { label: 'Last Name', token: 'lastName', fallback: '' },
+    { label: 'Company Name', token: 'companyName', fallback: 'your company' },
+    { label: 'Email', token: 'email', fallback: 'your email' },
+    { label: 'Custom Field', token: 'customField', fallback: '' },
+  ]
+
+  const insertMergeTag = (field, tag) => {
+    const tagText = tag.fallback ? `{{${tag.token} | ${tag.fallback}}}` : `{{${tag.token}}}`
+    const selRef = field === 'header' ? headerSelRef : messageSelRef
+    const ref = field === 'header' ? headerRef : messageRef
+    const current = field === 'header' ? headerTemplate : messageTemplate
+    const setter = field === 'header' ? setHeaderTemplate : setMessageTemplate
+
+    const { start, end } = selRef.current
+    const next = current.slice(0, start) + tagText + current.slice(end)
+    setter(next)
+
+    const newPos = start + tagText.length
+    selRef.current = { start: newPos, end: newPos }
+
+    requestAnimationFrame(() => {
+      if (ref.current) {
+        ref.current.focus()
+        ref.current.setSelectionRange(newPos, newPos)
+      }
+    })
+
+    setMergePopup(null)
+  }
+
   const buildRenderPayload = (contact) => {
     const normalizedContact = normalizeContact(contact)
 
@@ -432,7 +470,16 @@ function App() {
 
       try {
         const payload = buildRenderPayload(contact)
-        const personalizedAudioBlob = await generatePersonalizedAudio(contact, activeTranscript)
+
+        // TTS failure is non-blocking — video uses original audio if TTS fails
+        let personalizedAudioBlob = null
+        if (activeTranscript && namePersonalization) {
+          try {
+            personalizedAudioBlob = await generatePersonalizedAudio(contact, activeTranscript)
+          } catch (ttsError) {
+            console.warn('[TTS] Skipping personalized audio:', ttsError.message)
+          }
+        }
 
         const blob = await renderDynamicVideo({
           sourceBlob: dynamicSelectedVideo.blob,
@@ -527,7 +574,14 @@ function App() {
         } catch { /* skip TTS if transcription fails */ }
       }
 
-      const personalizedAudioBlob = await generatePersonalizedAudio(contact, transcript)
+      let personalizedAudioBlob = null
+      if (transcript && namePersonalization) {
+        try {
+          personalizedAudioBlob = await generatePersonalizedAudio(contact, transcript)
+        } catch (ttsError) {
+          console.warn('[TTS] Retry — skipping personalized audio:', ttsError.message)
+        }
+      }
 
       const blob = await renderDynamicVideo({
         sourceBlob: dynamicSelectedVideo.blob,
@@ -828,31 +882,94 @@ function App() {
         ) : null}
 
         {dynamicStep === 3 ? (
-          <section className="wizard-card">
-            <h3>Step 3: Layout, Message, and CTA</h3>
+          <section className="wizard-card" onClick={() => setMergePopup(null)}>
+            <h3>Step 3: Landing Page — Layout &amp; Message</h3>
 
             <div className="field-grid two-column">
-              <label>
-                Header Template
+              <div className="merge-field-wrap">
+                <div className="merge-field-label">
+                  <span>Header</span>
+                  <div className="merge-popup-anchor">
+                    <button
+                      type="button"
+                      className="personalize-btn"
+                      onClick={(e) => { e.stopPropagation(); setMergePopup(mergePopup === 'header' ? null : 'header') }}
+                    >
+                      {'{ }'} Personalize
+                    </button>
+                    {mergePopup === 'header' && (
+                      <div className="merge-popup" onClick={(e) => e.stopPropagation()}>
+                        <p className="merge-popup-title">Insert Merge Tag</p>
+                        {MERGE_TAGS.map((tag) => (
+                          <button
+                            key={tag.token}
+                            type="button"
+                            className="merge-tag-item"
+                            onClick={() => insertMergeTag('header', tag)}
+                          >
+                            {tag.label}{tag.fallback ? ` | ${tag.fallback}` : ''}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <textarea
+                  ref={headerRef}
                   rows={3}
+                  placeholder="e.g. Hey {{firstName | there}}!"
                   value={headerTemplate}
-                  onChange={(event) => setHeaderTemplate(event.target.value)}
+                  onChange={(e) => setHeaderTemplate(e.target.value)}
+                  onSelect={(e) => { headerSelRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd } }}
+                  onKeyUp={(e) => { headerSelRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd } }}
+                  onClick={(e) => { headerSelRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd } }}
                 />
-              </label>
+              </div>
 
-              <label>
-                Message Template
+              <div className="merge-field-wrap">
+                <div className="merge-field-label">
+                  <span>Message</span>
+                  <div className="merge-popup-anchor">
+                    <button
+                      type="button"
+                      className="personalize-btn"
+                      onClick={(e) => { e.stopPropagation(); setMergePopup(mergePopup === 'message' ? null : 'message') }}
+                    >
+                      {'{ }'} Personalize
+                    </button>
+                    {mergePopup === 'message' && (
+                      <div className="merge-popup" onClick={(e) => e.stopPropagation()}>
+                        <p className="merge-popup-title">Insert Merge Tag</p>
+                        {MERGE_TAGS.map((tag) => (
+                          <button
+                            key={tag.token}
+                            type="button"
+                            className="merge-tag-item"
+                            onClick={() => insertMergeTag('message', tag)}
+                          >
+                            {tag.label}{tag.fallback ? ` | ${tag.fallback}` : ''}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <textarea
+                  ref={messageRef}
                   rows={3}
+                  placeholder="e.g. I recorded this specifically for {{companyName | your team}}."
                   value={messageTemplate}
-                  onChange={(event) => setMessageTemplate(event.target.value)}
+                  onChange={(e) => setMessageTemplate(e.target.value)}
+                  onSelect={(e) => { messageSelRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd } }}
+                  onKeyUp={(e) => { messageSelRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd } }}
+                  onClick={(e) => { messageSelRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd } }}
                 />
-              </label>
+              </div>
 
               <label>
-                CTA Text
+                CTA Button Text
                 <input
+                  placeholder="e.g. Book a call"
                   value={ctaText}
                   onChange={(event) => setCtaText(event.target.value)}
                 />
@@ -861,6 +978,7 @@ function App() {
               <label>
                 CTA URL
                 <input
+                  placeholder="https://..."
                   value={ctaUrl}
                   onChange={(event) => setCtaUrl(event.target.value)}
                 />
@@ -868,10 +986,13 @@ function App() {
             </div>
 
             <div className="preview-card">
-              <h4>Live Text Preview</h4>
+              <h4>Live Preview — first contact</h4>
               {previewHeader ? <p className="preview-header">{previewHeader}</p> : null}
               {previewMessage ? <p className="preview-message">{previewMessage}</p> : null}
               {previewCta ? <button className="button solid" type="button">{previewCta}</button> : null}
+              {!previewHeader && !previewMessage && !previewCta ? (
+                <p style={{color: 'var(--muted-2)', fontSize: 14, margin: 0}}>Start typing above to see a live preview with your first contact's data.</p>
+              ) : null}
             </div>
 
             <div className="wizard-nav">

@@ -42,37 +42,32 @@ function getBubblePlacement(position, width, height) {
 }
 
 async function loadImage(url) {
-  if (!url) {
-    return null
-  }
+  if (!url) return null
 
+  // Fetch the image through JS so we get a blob: URL — this avoids canvas
+  // tainting that would break captureStream() on cross-origin images.
   try {
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error('Screenshot fetch failed.')
-    }
+    const response = await fetch(url, { mode: 'cors' })
+    if (!response.ok) throw new Error(`Image fetch: ${response.status}`)
 
     const blob = await response.blob()
-    const objectUrl = URL.createObjectURL(blob)
+    if (!blob.size) throw new Error('Empty image blob')
 
+    const objectUrl = URL.createObjectURL(blob)
     return await new Promise((resolve) => {
-      const image = new Image()
-      image.onload = () => {
-        URL.revokeObjectURL(objectUrl)
-        resolve(image)
-      }
-      image.onerror = () => {
-        URL.revokeObjectURL(objectUrl)
-        resolve(null)
-      }
-      image.src = objectUrl
+      const img = new Image()
+      img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img) }
+      img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(null) }
+      img.src = objectUrl
     })
   } catch {
+    // No-cors fallback: load direct. Canvas may be tainted but captureStream usually still works.
     return new Promise((resolve) => {
-      const image = new Image()
-      image.onload = () => resolve(image)
-      image.onerror = () => resolve(null)
-      image.src = url
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => resolve(img)
+      img.onerror = () => resolve(null)
+      img.src = url
     })
   }
 }

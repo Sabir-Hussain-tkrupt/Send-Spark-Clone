@@ -56,7 +56,7 @@ export function applyTemplate(template, contact) {
   const safeTemplate = String(template || '')
   const context = normalizeContact(contact)
 
-  return safeTemplate.replace(/{{\s*([^}|]+?)\s*(?:\|\s*([^}]+?)\s*)?}}/g, (_, token, fallback) => {
+  const replaced = safeTemplate.replace(/{{\s*([^}|]+?)\s*(?:\|\s*([^}]+?)\s*)?}}/g, (_, token, fallback) => {
     const value = resolveValue(token, context)
     if (value !== undefined && value !== null && String(value).trim() !== '') {
       return String(value).trim()
@@ -64,6 +64,9 @@ export function applyTemplate(template, contact) {
 
     return fallback ? String(fallback).trim() : ''
   })
+
+  // Collapse any double-spaces and stray punctuation gaps left by empty tokens
+  return replaced.replace(/[ \t]{2,}/g, ' ').replace(/\s+([,!.?])/g, '$1').trim()
 }
 
 export function replaceKeywordWithFirstName(text, keyword, firstName) {

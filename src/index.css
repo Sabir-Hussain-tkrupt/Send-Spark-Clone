@@ -1218,6 +1218,111 @@ body {
   color: var(--success-text);
 }
 
+/* ─── Merge-tag popup ─────────────────────────────────────────── */
+.merge-field-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.merge-field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.merge-popup-anchor {
+  position: relative;
+}
+
+.personalize-btn {
+  border: 1.5px solid #c4b5fd;
+  border-radius: 999px;
+  background: #f5f3ff;
+  color: #5b3df5;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.personalize-btn:hover {
+  background: #ede8ff;
+  border-color: #a78bfa;
+}
+
+.merge-popup {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  min-width: 220px;
+  padding: 8px;
+  animation: stageIn 0.15s ease both;
+}
+
+.merge-popup-title {
+  margin: 0 0 6px;
+  padding: 0 6px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.merge-tag-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.merge-tag-item:hover {
+  background: #f3f0ff;
+  color: var(--brand);
+}
+
+/* field-grid inside merge-field-wrap needs textarea to not have label wrapper */
+.merge-field-wrap textarea {
+  width: 100%;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 13px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+  resize: vertical;
+}
+
+.merge-field-wrap textarea:focus {
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(91,61,245,0.12);
+}
+
 /* ─── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 980px) {
   .layout-shell { grid-template-columns: 1fr; }
