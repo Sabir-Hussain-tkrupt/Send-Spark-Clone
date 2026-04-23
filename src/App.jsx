@@ -23,6 +23,7 @@ import {
 } from './lib/template'
 import { transcribeVideoBlob } from './lib/transcription'
 import { synthesizeSpeechFromText } from './lib/tts'
+import { spliceNameIntoAudio } from './lib/audioSplice'
 import { renderDynamicVideo } from './lib/dynamicVideo'
 
 const VIEWS = {
@@ -98,6 +99,7 @@ function App() {
 
   const [namePersonalization, setNamePersonalization] = useState(true)
   const [detectedTranscript, setDetectedTranscript] = useState('')
+  const [detectedWordChunks, setDetectedWordChunks] = useState([])
 
   const [dynamicBackgroundEnabled, setDynamicBackgroundEnabled] = useState(true)
   const [fallbackUrl, setFallbackUrl] = useState('')
@@ -250,6 +252,7 @@ function App() {
         setDynamicSelectedId(saved.id)
         setDynamicStep(1)
         setDetectedTranscript('')
+        setDetectedWordChunks([])
       }
 
       setStatus('Video uploaded and saved to library.')
@@ -385,10 +388,19 @@ function App() {
     const setter = field === 'header' ? setHeaderTemplate : setMessageTemplate
 
     const { start, end } = selRef.current
-    const next = current.slice(0, start) + tagText + current.slice(end)
+
+    // Auto-add a space before the tag if the preceding char is not already a space
+    const charBefore = current[start - 1]
+    const needSpaceBefore = start > 0 && charBefore && charBefore !== ' '
+    // Auto-add a space after the tag if the following char is not a space or end of string
+    const charAfter = current[end]
+    const needSpaceAfter = charAfter && charAfter !== ' '
+
+    const insertion = (needSpaceBefore ? ' ' : '') + tagText + (needSpaceAfter ? ' ' : '')
+    const next = current.slice(0, start) + insertion + current.slice(end)
     setter(next)
 
-    const newPos = start + tagText.length
+    const newPos = start + insertion.length
     selRef.current = { start: newPos, end: newPos }
 
     requestAnimationFrame(() => {
@@ -414,12 +426,27 @@ function App() {
     }
   }
 
-  const generatePersonalizedAudio = async (contact, transcript) => {
-    if (!namePersonalization || !transcript) {
-      return null
+  const generatePersonalizedAudio = async (contact, transcript, wordChunks, sourceBlob) => {
+    if (!namePersonalization) return null
+
+    // Build the display name: firstName + lastName if available
+    const displayName = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || contact.firstName || 'there'
+
+    // === Strategy 1: Word-level splice (best quality) ===
+    // Only the spoken word "someone" is replaced; all other audio stays original.
+    if (wordChunks && wordChunks.length > 0 && sourceBlob) {
+      try {
+        const spliced = await spliceNameIntoAudio(sourceBlob, wordChunks, FIXED_PERSONALIZATION_KEYWORD, displayName)
+        if (spliced) return spliced
+      } catch (spliceErr) {
+        console.warn('[AudioSplice] Falling back to full-script TTS:', spliceErr.message)
+      }
     }
 
-    const script = replaceKeywordWithFirstName(transcript, FIXED_PERSONALIZATION_KEYWORD, contact.firstName)
+    // === Strategy 2: Full-script TTS fallback ===
+    // Replaces entire audio track with TTS of transcript with name swapped.
+    if (!transcript) return null
+    const script = replaceKeywordWithFirstName(transcript, FIXED_PERSONALIZATION_KEYWORD, displayName)
     return synthesizeSpeechFromText(script)
   }
 
@@ -446,17 +473,21 @@ function App() {
     setGenerationPercent(0)
     resetDynamicOutputs()
 
-    // Transcribe video once upfront for name personalization TTS
+    // Transcribe video once upfront for word-level name personalization
     let activeTranscript = detectedTranscript
+    let activeWordChunks = detectedWordChunks
     if (namePersonalization && !activeTranscript) {
-      setGenerationProgress('Transcribing video for name personalization...')
+      setGenerationProgress('Transcribing video for name personalization…')
       try {
-        activeTranscript = await transcribeVideoBlob(dynamicSelectedVideo.blob)
+        const result = await transcribeVideoBlob(dynamicSelectedVideo.blob)
+        activeTranscript = result.text
+        activeWordChunks = result.wordChunks || []
         if (activeTranscript) {
           setDetectedTranscript(activeTranscript)
+          setDetectedWordChunks(activeWordChunks)
         }
       } catch {
-        // Continue without TTS if transcription fails
+        // Continue without audio personalization if transcription fails
       }
     }
 
@@ -471,13 +502,18 @@ function App() {
       try {
         const payload = buildRenderPayload(contact)
 
-        // TTS failure is non-blocking — video uses original audio if TTS fails
+        // Audio personalization is non-blocking — falls back to original audio on any failure
         let personalizedAudioBlob = null
-        if (activeTranscript && namePersonalization) {
+        if (namePersonalization) {
           try {
-            personalizedAudioBlob = await generatePersonalizedAudio(contact, activeTranscript)
+            personalizedAudioBlob = await generatePersonalizedAudio(
+              contact,
+              activeTranscript,
+              activeWordChunks,
+              dynamicSelectedVideo.blob,
+            )
           } catch (ttsError) {
-            console.warn('[TTS] Skipping personalized audio:', ttsError.message)
+            console.warn('[Audio] Skipping personalized audio:', ttsError.message)
           }
         }
 
@@ -575,11 +611,16 @@ function App() {
       }
 
       let personalizedAudioBlob = null
-      if (transcript && namePersonalization) {
+      if (namePersonalization) {
         try {
-          personalizedAudioBlob = await generatePersonalizedAudio(contact, transcript)
+          personalizedAudioBlob = await generatePersonalizedAudio(
+            contact,
+            transcript,
+            detectedWordChunks,
+            dynamicSelectedVideo.blob,
+          )
         } catch (ttsError) {
-          console.warn('[TTS] Retry — skipping personalized audio:', ttsError.message)
+          console.warn('[Audio] Retry — skipping personalized audio:', ttsError.message)
         }
       }
 
@@ -690,6 +731,7 @@ function App() {
                     setDynamicStep(1)
                     setError('')
                     setDetectedTranscript('')
+        setDetectedWordChunks([])
                     resetDynamicOutputs()
                   }}
                 >
@@ -1260,6 +1302,7 @@ function App() {
                 onToggle={(next) => {
                   setNamePersonalization(next)
                   setDetectedTranscript('')
+        setDetectedWordChunks([])
                 }}
               />
             </label>

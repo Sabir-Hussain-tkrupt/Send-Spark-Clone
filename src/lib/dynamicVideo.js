@@ -85,25 +85,22 @@ function normalizeWebsiteUrl(url) {
   return `https://${value}`
 }
 
-function buildCustomScreenshotSource(url) {
-  const configured = String(import.meta.env.VITE_SCREENSHOT_API_TEMPLATE || '').trim()
-  if (!configured) {
-    return ''
-  }
-
-  // Accept either a full template containing {url} or a raw provider API key.
-  if (configured.includes('{url}')) {
-    return configured.replace('{url}', encodeURIComponent(url))
-  }
-
-  if (configured.startsWith('ubx_')) {
-    // full_page=true gives a tall screenshot for realistic scrolling
-    return `https://api.urlbox.io/v1/${configured}/png?url=${encodeURIComponent(url)}&width=1280&full_page=true&delay=2000&quality=90`
-  }
-
-  return `https://shot.screenshotapi.net/screenshot?token=${encodeURIComponent(configured)}&url=${encodeURIComponent(
-    url,
-  )}&width=1280&full_page=true`
+function buildScreenshotSources(websiteUrl) {
+  const encoded = encodeURIComponent(websiteUrl)
+  // URLBox (ubx_sk_* keys) needs HMAC-signed tokens — skip them to avoid
+  // the "Image not authorized" watermark image that still returns HTTP 200.
+  // Use only truly free, no-auth services.
+  return [
+    // thum.io fullpage — best quality, free, no auth
+    `https://image.thum.io/get/width/1280/fullpage/noanimate/${websiteUrl}`,
+    `https://image.thum.io/get/width/1280/fullpage/noanimate/${encoded}`,
+    // thum.io viewport fallback
+    `https://image.thum.io/get/width/1280/${websiteUrl}`,
+    // WordPress mshots — free, no auth
+    `https://s.wordpress.com/mshots/v1/${encoded}?w=1280&h=960`,
+    // pagepeeker — free tier, no auth
+    `https://free.pagepeeker.com/v2/thumbs.php?size=x&url=${encoded}`,
+  ]
 }
 
 async function resolveBackgroundImage(primaryUrl, fallbackUrl) {
@@ -111,34 +108,22 @@ async function resolveBackgroundImage(primaryUrl, fallbackUrl) {
   const cleanedFallback = normalizeWebsiteUrl(fallbackUrl)
 
   const sources = []
+
   if (cleanedPrimary) {
-    const customPrimary = buildCustomScreenshotSource(cleanedPrimary)
-    if (customPrimary) {
-      sources.push(customPrimary)
+    for (const src of buildScreenshotSources(cleanedPrimary)) {
+      sources.push(src)
     }
-    // fullpage variant gives tall image for realistic scroll through entire page
-    sources.push(`https://image.thum.io/get/width/1280/fullpage/${cleanedPrimary}`)
-    sources.push(`https://image.thum.io/get/width/1280/fullpage/${encodeURIComponent(cleanedPrimary)}`)
-    sources.push(`https://image.thum.io/get/width/1280/noanimate/${cleanedPrimary}`)
-    sources.push(`https://mini.s-shot.ru/1920x1080/JPEG/1920/Z100/?${encodeURIComponent(cleanedPrimary)}`)
-    sources.push(`https://s.wordpress.com/mshots/v1/${encodeURIComponent(cleanedPrimary)}?w=1280`)
   }
 
   if (cleanedFallback) {
-    const customFallback = buildCustomScreenshotSource(cleanedFallback)
-    if (customFallback) {
-      sources.push(customFallback)
+    for (const src of buildScreenshotSources(cleanedFallback)) {
+      sources.push(src)
     }
-    sources.push(`https://image.thum.io/get/width/1280/fullpage/${cleanedFallback}`)
-    sources.push(`https://image.thum.io/get/width/1280/fullpage/${encodeURIComponent(cleanedFallback)}`)
-    sources.push(`https://image.thum.io/get/width/1280/noanimate/${cleanedFallback}`)
-    sources.push(`https://mini.s-shot.ru/1920x1080/JPEG/1920/Z100/?${encodeURIComponent(cleanedFallback)}`)
-    sources.push(`https://s.wordpress.com/mshots/v1/${encodeURIComponent(cleanedFallback)}?w=1280`)
   }
 
   for (const source of sources) {
     const image = await loadImage(source)
-    if (image) {
+    if (image && image.width > 100) {
       return image
     }
   }
