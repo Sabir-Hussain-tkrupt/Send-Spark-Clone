@@ -115,6 +115,7 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationProgress, setGenerationProgress] = useState('')
   const [generationPercent, setGenerationPercent] = useState(0)
+  const [retryingIds, setRetryingIds] = useState(new Set())
 
   const uploadRef = useRef(null)
 
@@ -507,6 +508,87 @@ function App() {
 
     const firstSuccess = results.find((item) => item.status === 'success')
     setSelectedGeneratedId(firstSuccess?.id || null)
+  }
+
+  const retryGenerateVideo = async (failedItem) => {
+    if (!dynamicSelectedVideo) return
+
+    setRetryingIds((prev) => new Set([...prev, failedItem.id]))
+
+    try {
+      const contact = failedItem.contact
+      const payload = buildRenderPayload(contact)
+
+      let transcript = detectedTranscript
+      if (namePersonalization && !transcript) {
+        try {
+          transcript = await transcribeVideoBlob(dynamicSelectedVideo.blob)
+          if (transcript) setDetectedTranscript(transcript)
+        } catch { /* skip TTS if transcription fails */ }
+      }
+
+      const personalizedAudioBlob = await generatePersonalizedAudio(contact, transcript)
+
+      const blob = await renderDynamicVideo({
+        sourceBlob: dynamicSelectedVideo.blob,
+        dynamicBackground: dynamicBackgroundEnabled,
+        backgroundUrl: payload.background,
+        fallbackUrl,
+        bubblePosition,
+        simulateScrolling,
+        personalizedAudioBlob,
+      })
+
+      let duration = 0
+      try { duration = await getBlobDuration(blob) } catch { duration = Number(dynamicSelectedVideo.duration || 0) }
+
+      try {
+        await addVideoRecord({
+          blob,
+          name: `dynamic-${contact.firstName || 'contact'}-${Date.now()}.webm`,
+          duration,
+          source: 'dynamic',
+          mimeType: blob.type || 'video/webm',
+          size: blob.size,
+          createdAt: new Date().toISOString(),
+        })
+      } catch { /* non-fatal */ }
+
+      const previewUrl = URL.createObjectURL(blob)
+      setGeneratedVideos((prev) =>
+        prev.map((item) =>
+          item.id === failedItem.id
+            ? {
+                id: failedItem.id,
+                contact,
+                header: payload.header,
+                message: payload.message,
+                cta: payload.cta,
+                ctaHref: payload.ctaHref,
+                previewUrl,
+                blob,
+                status: 'success',
+                fileName: `dynamic-${contact.firstName || 'contact'}-retry.webm`,
+              }
+            : item,
+        ),
+      )
+      await refreshVideos()
+    } catch (retryError) {
+      setGeneratedVideos((prev) =>
+        prev.map((item) =>
+          item.id === failedItem.id
+            ? { ...item, error: retryError.message || 'Retry failed.', status: 'error' }
+            : item,
+        ),
+      )
+    } finally {
+      setRetryingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(failedItem.id)
+        return next
+      })
+    }
   }
 
   const downloadGeneratedVideo = (record) => {
@@ -914,20 +996,34 @@ function App() {
                         key={item.id}
                         className={selectedGeneratedVideo?.id === item.id ? 'output-item active' : 'output-item'}
                       >
-                        <button
-                          className="output-open"
-                          type="button"
-                          onClick={() => setSelectedGeneratedId(item.id)}
-                        >
-                          {name}
-                        </button>
+                        <div className="output-item-header">
+                          <div className="output-avatar">
+                            {name.charAt(0).toUpperCase()}
+                          </div>
+                          <button
+                            className="output-open"
+                            type="button"
+                            onClick={() => setSelectedGeneratedId(item.id)}
+                          >
+                            {name}
+                          </button>
+                        </div>
 
                         {item.status === 'success' ? (
-                          <button className="button ghost" onClick={() => downloadGeneratedVideo(item)}>
+                          <button className="button ghost btn-sm" onClick={() => downloadGeneratedVideo(item)}>
                             Download
                           </button>
                         ) : (
-                          <p className="error-text">{item.error || 'Generation failed'}</p>
+                          <div className="output-error-row">
+                            <p className="error-text">{item.error || 'Generation failed'}</p>
+                            <button
+                              className="button ghost btn-sm btn-retry"
+                              onClick={() => retryGenerateVideo(item)}
+                              disabled={retryingIds.has(item.id)}
+                            >
+                              {retryingIds.has(item.id) ? 'Retrying…' : 'Try Again'}
+                            </button>
+                          </div>
                         )}
                       </article>
                     )
@@ -987,19 +1083,23 @@ function App() {
 
         <nav className="sidebar-nav">
           <button className={view === VIEWS.HOME ? 'side-link active' : 'side-link'} onClick={() => setView(VIEWS.HOME)}>
+            <svg className="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7A1 1 0 003 11h1v6a1 1 0 001 1h4v-5h2v5h4a1 1 0 001-1v-6h1a1 1 0 00.707-1.707l-7-7z"/></svg>
             Welcome
           </button>
           <button
             className={view === VIEWS.LIBRARY ? 'side-link active' : 'side-link'}
             onClick={() => setView(VIEWS.LIBRARY)}
           >
-            Video Libraries
+            <svg className="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z"/></svg>
+            Video Library
+            {videos.length > 0 && <span className="nav-badge">{videos.length}</span>}
           </button>
           <button
             className={view === VIEWS.DYNAMIC ? 'side-link active' : 'side-link'}
             onClick={() => setView(VIEWS.DYNAMIC)}
           >
-            Dynamic Videos
+            <svg className="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"/></svg>
+            Dynamic Studio
           </button>
         </nav>
       </aside>
