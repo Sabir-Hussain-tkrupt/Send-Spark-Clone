@@ -102,7 +102,8 @@ function buildCustomScreenshotSource(url) {
   }
 
   if (configured.startsWith('ubx_')) {
-    return `https://api.urlbox.io/v1/${configured}/png?url=${encodeURIComponent(url)}&width=1280&full_page=true`
+    // full_page=true gives a tall screenshot for realistic scrolling
+    return `https://api.urlbox.io/v1/${configured}/png?url=${encodeURIComponent(url)}&width=1280&full_page=true&delay=2000&quality=90`
   }
 
   return `https://shot.screenshotapi.net/screenshot?token=${encodeURIComponent(configured)}&url=${encodeURIComponent(
@@ -120,10 +121,12 @@ async function resolveBackgroundImage(primaryUrl, fallbackUrl) {
     if (customPrimary) {
       sources.push(customPrimary)
     }
-    sources.push(`https://image.thum.io/get/width/1920/noanimate/${cleanedPrimary}`)
-    sources.push(`https://image.thum.io/get/width/1920/noanimate/${encodeURIComponent(cleanedPrimary)}`)
+    // fullpage variant gives tall image for realistic scroll through entire page
+    sources.push(`https://image.thum.io/get/width/1280/fullpage/${cleanedPrimary}`)
+    sources.push(`https://image.thum.io/get/width/1280/fullpage/${encodeURIComponent(cleanedPrimary)}`)
+    sources.push(`https://image.thum.io/get/width/1280/noanimate/${cleanedPrimary}`)
     sources.push(`https://mini.s-shot.ru/1920x1080/JPEG/1920/Z100/?${encodeURIComponent(cleanedPrimary)}`)
-    sources.push(`https://s.wordpress.com/mshots/v1/${encodeURIComponent(cleanedPrimary)}?w=1920`)
+    sources.push(`https://s.wordpress.com/mshots/v1/${encodeURIComponent(cleanedPrimary)}?w=1280`)
   }
 
   if (cleanedFallback) {
@@ -131,10 +134,11 @@ async function resolveBackgroundImage(primaryUrl, fallbackUrl) {
     if (customFallback) {
       sources.push(customFallback)
     }
-    sources.push(`https://image.thum.io/get/width/1920/noanimate/${cleanedFallback}`)
-    sources.push(`https://image.thum.io/get/width/1920/noanimate/${encodeURIComponent(cleanedFallback)}`)
+    sources.push(`https://image.thum.io/get/width/1280/fullpage/${cleanedFallback}`)
+    sources.push(`https://image.thum.io/get/width/1280/fullpage/${encodeURIComponent(cleanedFallback)}`)
+    sources.push(`https://image.thum.io/get/width/1280/noanimate/${cleanedFallback}`)
     sources.push(`https://mini.s-shot.ru/1920x1080/JPEG/1920/Z100/?${encodeURIComponent(cleanedFallback)}`)
-    sources.push(`https://s.wordpress.com/mshots/v1/${encodeURIComponent(cleanedFallback)}?w=1920`)
+    sources.push(`https://s.wordpress.com/mshots/v1/${encodeURIComponent(cleanedFallback)}?w=1280`)
   }
 
   for (const source of sources) {
@@ -145,6 +149,11 @@ async function resolveBackgroundImage(primaryUrl, fallbackUrl) {
   }
 
   return null
+}
+
+function smoothstep(t) {
+  const clamped = Math.max(0, Math.min(1, t))
+  return clamped * clamped * (3 - 2 * clamped)
 }
 
 function drawBackground(ctx, canvas, backgroundImage, simulateScrolling, progress) {
@@ -160,35 +169,26 @@ function drawBackground(ctx, canvas, backgroundImage, simulateScrolling, progres
     return
   }
 
-  const imageRatio = backgroundImage.width / backgroundImage.height
-  const canvasRatio = width / height
+  // Scale image to fill canvas width exactly (preserves full page height for scrolling)
+  const scaleToWidth = width / backgroundImage.width
+  const drawWidth = width
+  const drawHeight = backgroundImage.height * scaleToWidth
 
-  let drawWidth = width
-  let drawHeight = height
-  if (imageRatio > canvasRatio) {
-    drawHeight = height
-    drawWidth = drawHeight * imageRatio
-  } else {
-    drawWidth = width
-    drawHeight = drawWidth / imageRatio
+  let offsetY = 0
+
+  if (simulateScrolling && drawHeight > height) {
+    // Scroll smoothly from top to near-bottom of the full page screenshot.
+    // smoothstep easing gives a natural deceleration feel.
+    const maxScroll = drawHeight - height
+    // Scroll through 85% of the page so the bottom edge isn't abruptly cut off.
+    offsetY = -(maxScroll * 0.85 * smoothstep(progress))
+  } else if (!simulateScrolling) {
+    // Center vertically when not scrolling
+    offsetY = Math.min(0, (height - drawHeight) / 2)
   }
 
-  if (simulateScrolling) {
-    // Scale up slightly so we always have vertical room to animate scrolling.
-    drawWidth *= 1.12
-    drawHeight *= 1.12
-  }
-
-  let offsetX = (width - drawWidth) / 2
-  let offsetY = (height - drawHeight) / 2
-
-  if (simulateScrolling) {
-    const maxShift = Math.max(0, drawHeight - height)
-    offsetY = -maxShift * progress
-  }
-
-  ctx.drawImage(backgroundImage, offsetX, offsetY, drawWidth, drawHeight)
-  ctx.fillStyle = 'rgba(7, 11, 22, 0.2)'
+  ctx.drawImage(backgroundImage, 0, offsetY, drawWidth, drawHeight)
+  ctx.fillStyle = 'rgba(7, 11, 22, 0.15)'
   ctx.fillRect(0, 0, width, height)
 }
 

@@ -18,7 +18,6 @@ import {
 import {
   applyTemplate,
   createEmptyContact,
-  keywordExistsFuzzy,
   normalizeContact,
   replaceKeywordWithFirstName,
 } from './lib/template'
@@ -99,8 +98,6 @@ function App() {
 
   const [namePersonalization, setNamePersonalization] = useState(true)
   const [detectedTranscript, setDetectedTranscript] = useState('')
-  const [keywordCheckRunning, setKeywordCheckRunning] = useState(false)
-  const [keywordChecked, setKeywordChecked] = useState(false)
 
   const [dynamicBackgroundEnabled, setDynamicBackgroundEnabled] = useState(true)
   const [fallbackUrl, setFallbackUrl] = useState('')
@@ -245,7 +242,6 @@ function App() {
         setView(VIEWS.DYNAMIC)
         setDynamicSelectedId(saved.id)
         setDynamicStep(1)
-        setKeywordChecked(false)
         setDetectedTranscript('')
       }
 
@@ -303,7 +299,6 @@ function App() {
       setView(VIEWS.DYNAMIC)
       setDynamicSelectedId(saved.id)
       setDynamicStep(1)
-      setKeywordChecked(false)
       setDetectedTranscript('')
     }
 
@@ -341,47 +336,15 @@ function App() {
     setDynamicConfigOpen(true)
   }
 
-  const validateKeywordAndContinue = async () => {
+  const validateKeywordAndContinue = () => {
     if (!dynamicSelectedVideo) {
       setError('Select a video first to continue.')
       return
     }
 
-    if (!namePersonalization) {
-      setKeywordChecked(false)
-      setDetectedTranscript('')
-      setDynamicConfigOpen(false)
-      setDynamicStep(2)
-      return
-    }
-
-    setKeywordCheckRunning(true)
-    setError('')
-
-    try {
-      const transcript = await transcribeVideoBlob(dynamicSelectedVideo.blob)
-
-      if (!transcript) {
-        throw new Error('Could not detect speech transcript from this video.')
-      }
-
-      setDetectedTranscript(transcript)
-      const hasKeyword = keywordExistsFuzzy(transcript, FIXED_PERSONALIZATION_KEYWORD)
-
-      if (!hasKeyword) {
-        throw new Error("Keyword 'someone' not found in video")
-      }
-
-      setKeywordChecked(true)
-      setDynamicConfigOpen(false)
-      setDynamicStep(2)
-      setStatus("Keyword 'someone' detected successfully.")
-    } catch (keywordError) {
-      setKeywordChecked(false)
-      setError(keywordError.message || 'Keyword validation failed.')
-    } finally {
-      setKeywordCheckRunning(false)
-    }
+    setDetectedTranscript('')
+    setDynamicConfigOpen(false)
+    setDynamicStep(2)
   }
 
   const updateContact = (id, key, value) => {
@@ -412,21 +375,12 @@ function App() {
     }
   }
 
-  const generatePersonalizedAudio = async (contact) => {
-    if (!namePersonalization) {
+  const generatePersonalizedAudio = async (contact, transcript) => {
+    if (!namePersonalization || !transcript) {
       return null
     }
 
-    if (!keywordChecked) {
-      throw new Error("Enable and validate keyword 'someone' before generating videos.")
-    }
-
-    const baseTranscript = String(detectedTranscript || '').trim()
-    if (!baseTranscript) {
-      throw new Error('Transcript is required for name-based voice replacement.')
-    }
-
-    const script = replaceKeywordWithFirstName(baseTranscript, FIXED_PERSONALIZATION_KEYWORD, contact.firstName)
+    const script = replaceKeywordWithFirstName(transcript, FIXED_PERSONALIZATION_KEYWORD, contact.firstName)
     return synthesizeSpeechFromText(script)
   }
 
@@ -447,17 +401,25 @@ function App() {
       return
     }
 
-    if (namePersonalization && !keywordChecked) {
-      setError("Keyword 'someone' must be validated first.")
-      setDynamicStep(1)
-      return
-    }
-
     setIsGenerating(true)
     setError('')
     setStatus('Generating personalized videos...')
     setGenerationPercent(0)
     resetDynamicOutputs()
+
+    // Transcribe video once upfront for name personalization TTS
+    let activeTranscript = detectedTranscript
+    if (namePersonalization && !activeTranscript) {
+      setGenerationProgress('Transcribing video for name personalization...')
+      try {
+        activeTranscript = await transcribeVideoBlob(dynamicSelectedVideo.blob)
+        if (activeTranscript) {
+          setDetectedTranscript(activeTranscript)
+        }
+      } catch {
+        // Continue without TTS if transcription fails
+      }
+    }
 
     const results = []
     const total = normalizedContacts.length
@@ -469,7 +431,7 @@ function App() {
 
       try {
         const payload = buildRenderPayload(contact)
-        const personalizedAudioBlob = await generatePersonalizedAudio(contact)
+        const personalizedAudioBlob = await generatePersonalizedAudio(contact, activeTranscript)
 
         const blob = await renderDynamicVideo({
           sourceBlob: dynamicSelectedVideo.blob,
@@ -591,7 +553,6 @@ function App() {
                     setDynamicSelectedId(video.id)
                     setDynamicStep(1)
                     setError('')
-                    setKeywordChecked(false)
                     setDetectedTranscript('')
                     resetDynamicOutputs()
                   }}
@@ -1077,7 +1038,6 @@ function App() {
                 checked={namePersonalization}
                 onToggle={(next) => {
                   setNamePersonalization(next)
-                  setKeywordChecked(false)
                   setDetectedTranscript('')
                 }}
               />
@@ -1085,21 +1045,21 @@ function App() {
 
             {namePersonalization ? (
               <>
-                <div className="keyword-instruction">Use keyword: someone in script for personalization</div>
+                <div className="keyword-instruction">Use keyword: someone in your script</div>
                 <p className="hint-text">
-                  We automatically check your audio for the keyword someone.
+                  At generation time, "someone" in your audio will be replaced with each contact's first name.
                 </p>
               </>
             ) : (
-              <p className="hint-text">Keyword detection and voice replacement will be skipped.</p>
+              <p className="hint-text">Voice replacement will be skipped.</p>
             )}
 
             <div className="modal-actions">
               <button className="button ghost" onClick={() => setDynamicConfigOpen(false)}>
                 Cancel
               </button>
-              <button className="button solid" onClick={validateKeywordAndContinue} disabled={keywordCheckRunning}>
-                {keywordCheckRunning ? 'Checking...' : 'Continue'}
+              <button className="button solid" onClick={validateKeywordAndContinue}>
+                Continue
               </button>
             </div>
           </div>
